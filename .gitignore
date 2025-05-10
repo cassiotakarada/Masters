@@ -1,0 +1,54 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.so
+
+# Virtual environments
+venv/
+env/
+.myenv/
+myenv/
+
+# VS Code settings
+.vscode/
+
+# PyInstaller
+*.spec
+
+# Test cache
+.pytest_cache/
+
+# Coverage reports
+htmlcov/
+.coverage
+coverage.xml
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+# Model weights and data files
+*.pth
+*.h5
+*.ckpt
+
+# Large CSV or result exports
+*.csv
+
+# Output/result folders
+results/
+runs/
+output/
+__results__/
+
+# Temporary or backup files
+*.tmp
+*.bak
+*.swp
