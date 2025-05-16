@@ -15,6 +15,7 @@ import os
 import pandas as pd
 import gc
 import re
+import json
 
 # Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -204,6 +205,14 @@ def run_experiment(data_flag, size=28, is_3d=False, use_resnet=False):
     layer_types = [(name, identify_layer_type(layer)) for name, layer in model.named_modules() if name]
     inference_mean, inference_outputs = run_inference(model, test_loader)
 
+    # Save inference results
+    json_path = os.path.join(save_dir, f"{data_flag}_{size}_inference_mean.json")
+    with open(json_path, "w") as f:
+        json.dump({f"neuron_{i}": val for i, val in enumerate(inference_mean)}, f)
+
+    pt_path = os.path.join(save_dir, f"{data_flag}_{size}_inference_outputs.pt")
+    torch.save({"layer": torch.tensor(inference_outputs)}, pt_path)
+
     result = {
         "dataset": data_flag,
         "size": size,
@@ -227,6 +236,6 @@ experiments = [
 ]
 
 results = [run_experiment(*args) for args in experiments]
-df = pd.DataFrame([{k: v for k, v in r.items() if k not in ['layers', 'inference_outputs'] } for r in all_results])
+df = pd.DataFrame([{k: v for k, v in r.items() if k not in ['layers', 'inference_outputs']} for r in all_results])
 df.to_csv(os.path.join(save_dir, "summary.csv"), index=False)
 print(f"✅ Results saved to {os.path.join(save_dir, 'summary.csv')}")

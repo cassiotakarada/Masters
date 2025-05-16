@@ -115,13 +115,23 @@ print("\n📊 Model Complexity Analysis Summary:\n")
 print(df[["file", "layer", "layer_type", "shape", "LMC", "SampEn"]])
 
 # ------------------- Ask for Specific Plot -------------------
-print("\nAvailable model files:")
-for f in df["file"].unique():
-    print(" -", f)
+unique_files = df["file"].unique()
+menu = {str(i+1): f for i, f in enumerate(unique_files)}
+menu[str(len(unique_files)+1)] = "all"
 
-chosen = input("\n🔎 Which model(s) to plot? (type name, or 'all'): ").strip().lower()
-if chosen != 'all':
-    df = df[df["file"].str.lower().str.contains(chosen)]
+print("\nAvailable model files:")
+for key, val in menu.items():
+    print(f"{key}: {val}")
+
+choice = input("\n🔎 Select the model(s) to plot by number (e.g., 1) or 'all': ").strip()
+
+if choice != str(len(unique_files)+1):
+    selected_file = menu.get(choice)
+    if selected_file:
+        df = df[df["file"] == selected_file]
+    else:
+        print("❌ Invalid choice.")
+        exit()
 
 # ------------------- Plotting -------------------
 plt.figure(figsize=(12, 5))
@@ -149,3 +159,11 @@ plt.show()
 output_path = os.path.join(weights_dir, "weights_entropy_results.csv")
 df.to_csv(output_path, index=False)
 print(f"✅ Saved complexity results to: {output_path}")
+
+# ------------------- Group Summary by Layer Type -------------------
+group_summary = df.groupby("layer_type")[["LMC", "SampEn"]].agg(["mean", "std", "count", "min", "max"])
+group_summary.columns = ['_'.join(col).strip() for col in group_summary.columns.values]  # flatten MultiIndex
+
+summary_path = os.path.join(weights_dir, "layer_type_summary.csv")
+group_summary.to_csv(summary_path)
+print(f"📄 Layer-type summary saved to: {summary_path}")

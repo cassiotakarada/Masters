@@ -19,45 +19,42 @@ mean_records = []
 
 for file in os.listdir(results_dir):
     if file.endswith("_inference_mean.json"):
-        base_name = file.replace("_inference_mean.json", "")
+        model_name = file.replace("_inference_mean.json", "")
         json_path = os.path.join(results_dir, file)
-        pt_path = os.path.join(results_dir, f"{base_name}_inference_outputs.pt")
+        pt_path = os.path.join(results_dir, f"{model_name}_inference_outputs.pt")
 
+        # Load JSON mean activations
         with open(json_path, 'r') as f:
-            layer_means = json.load(f)
+            values = json.load(f)
 
-        for layer, value in layer_means.items():
+        for idx, val in enumerate(values):
             mean_records.append({
-                "model": base_name,
-                "layer": layer,
-                "mean_activation": value
+                "model": model_name,
+                "unit": f"output_{idx}",
+                "mean_activation": val
             })
 
-        # Plot mean activations per layer
+        # Plot mean activations (bar chart)
         plt.figure(figsize=(10, 4))
-        layers = list(layer_means.keys())
-        means = list(layer_means.values())
-        sns.barplot(x=layers, y=means)
-        plt.xticks(rotation=90)
-        plt.title(f"🔍 Mean Activations - {base_name}")
+        sns.barplot(x=list(range(len(values))), y=values)
+        plt.title(f"🔍 Mean Activations - {model_name}")
+        plt.xlabel("Output Unit")
+        plt.ylabel("Mean Activation")
         plt.tight_layout()
-        plt.savefig(os.path.join(results_dir, f"{base_name}_mean_plot.png"))
-        plt.close()
+        plt.savefig(os.path.join(results_dir, f"{model_name}_mean_plot.png"))
+        plt.show()
 
-        # Optional: plot a sample heatmap of inference outputs (first batch only)
+        # Optional: visualize sample output from .pt file
         if os.path.exists(pt_path):
-            activations = torch.load(pt_path, map_location="cpu")
-            for layer, output in activations.items():
-                sample = output[0]  # first sample in batch
-                if isinstance(sample, torch.Tensor) and sample.ndim >= 2:
-                    plt.figure(figsize=(5, 4))
-                    if sample.ndim == 3:
-                        sample = sample.mean(0)  # average over channels
-                    sns.heatmap(sample.numpy(), cmap="viridis")
-                    plt.title(f"🔥 Heatmap: {base_name} - {layer}")
-                    plt.tight_layout()
-                    plt.savefig(os.path.join(results_dir, f"{base_name}_{layer}_heatmap.png"))
-                    plt.close()
+            output_tensor = torch.load(pt_path, map_location="cpu")  # shape: [N, C]
+            if isinstance(output_tensor, torch.Tensor) and output_tensor.ndim == 2:
+                sample = output_tensor[0].numpy()
+                plt.figure(figsize=(6, 3))
+                sns.heatmap(sample.reshape(1, -1), cmap="viridis", cbar=True)
+                plt.title(f"🔥 Output Activations Heatmap - {model_name}")
+                plt.tight_layout()
+                plt.savefig(os.path.join(results_dir, f"{model_name}_output_heatmap.png"))
+                plt.show()
 
 # ------------------------ Save CSV Summary ------------------------
 df = pd.DataFrame(mean_records)
