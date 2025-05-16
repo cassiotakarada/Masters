@@ -7,23 +7,46 @@ import os
 from scipy.stats import entropy
 from scipy.spatial.distance import cdist
 
-# ------------------- Utility Functions -------------------
-def shannon_entropy(data, bins=100):
+# --------------------- Configuration ---------------------
+def infer_layer_type(layer_name):
+    name = layer_name.lower()
+    if "conv" in name:
+        return "Convolutional"
+    elif "bn" in name or "batchnorm" in name:
+        return "BatchNorm"
+    elif "relu" in name:
+        return "Activation"
+    elif "pool" in name:
+        return "Pooling"
+    elif "linear" in name or "fc" in name:
+        return "Linear"
+    elif "flatten" in name:
+        return "Flatten"
+    else:
+        return "Unknown"
+
+# --------------------- Normalization ---------------------
+def compute_normalized_histogram(data, bins=100):
     hist, _ = np.histogram(data, bins=bins, density=True)
+    hist = hist / np.sum(hist) 
+    return hist
+
+# --------------------- LMC Complexity ---------------------
+def shannon_entropy_from_hist(hist):
     hist = hist[hist > 0]
     return -np.sum(hist * np.log2(hist))
 
-def disequilibrium(data, bins=100):
-    hist, _ = np.histogram(data, bins=bins, density=True)
-    hist = hist / np.sum(hist)
+def disequilibrium_from_hist(hist):
     uniform = np.ones_like(hist) / len(hist)
     return np.sum((hist - uniform) ** 2)
 
-def lmc_complexity(data):
-    ent = shannon_entropy(data)
-    dis = disequilibrium(data)
+def lmc_complexity(data, bins=100):
+    hist = compute_normalized_histogram(data, bins=bins)
+    ent = shannon_entropy_from_hist(hist)
+    dis = disequilibrium_from_hist(hist)
     return ent * dis
 
+# --------------------- Sample Entropy ---------------------
 def sample_entropy(U, m=2, r=None):
     U = np.asarray(U)
     N = len(U)
@@ -80,6 +103,7 @@ for file in os.listdir(weights_dir):
             results.append({
                 "file": file,
                 "layer": name,
+                "layer_type": infer_layer_type(name),
                 "shape": weight_np.shape,
                 "LMC": lmc,
                 "SampEn": sampen
@@ -88,7 +112,16 @@ for file in os.listdir(weights_dir):
 # ------------------- DataFrame Output -------------------
 df = pd.DataFrame(results)
 print("\n📊 Model Complexity Analysis Summary:\n")
-print(df[["file", "layer", "shape", "LMC", "SampEn"]])
+print(df[["file", "layer", "layer_type", "shape", "LMC", "SampEn"]])
+
+# ------------------- Ask for Specific Plot -------------------
+print("\nAvailable model files:")
+for f in df["file"].unique():
+    print(" -", f)
+
+chosen = input("\n🔎 Which model(s) to plot? (type name, or 'all'): ").strip().lower()
+if chosen != 'all':
+    df = df[df["file"].str.lower().str.contains(chosen)]
 
 # ------------------- Plotting -------------------
 plt.figure(figsize=(12, 5))
@@ -102,6 +135,13 @@ plt.figure(figsize=(12, 5))
 sns.barplot(x="layer", y="SampEn", hue="file", data=df)
 plt.xticks(rotation=90)
 plt.title("Sample Entropy by Layer")
+plt.tight_layout()
+plt.show()
+
+plt.figure(figsize=(12, 5))
+sns.boxplot(x="layer_type", y="LMC", data=df)
+plt.xticks(rotation=45)
+plt.title("LMC by Layer Type")
 plt.tight_layout()
 plt.show()
 

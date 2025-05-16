@@ -14,6 +14,7 @@ from torch.utils.tensorboard import SummaryWriter
 import os
 import pandas as pd
 import gc
+import re
 
 # Set device
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -40,18 +41,57 @@ def get_simple_cnn(in_channels, num_classes):
         nn.Linear(128, num_classes)
     )
 
-# Define number of epochs globally
-NUM_EPOCHS = 5
+# Ask user for number of epochs
+NUM_EPOCHS = int(input("🔢 Enter number of epochs: ").strip())
 
-# Counter for folder uniqueness
-global_id_counter = 1
+# Auto-incremental experiment ID
+def get_next_id(results_dir="results"):
+    if not os.path.exists(results_dir):
+        os.makedirs(results_dir)
+        return 1
+    existing_ids = []
+    pattern = re.compile(r"^(\d+)_\d+$")
+    for name in os.listdir(results_dir):
+        match = pattern.match(name)
+        if match:
+            existing_ids.append(int(match.group(1)))
+    return max(existing_ids, default=0) + 1
 
-# Directory format: results/{id}_{epochs}/
+# Counter and save folder
+global_id_counter = get_next_id()
 folder_name = f"{global_id_counter}_{NUM_EPOCHS}"
 save_dir = os.path.join("results", folder_name)
 os.makedirs(save_dir, exist_ok=True)
 
 all_results = []
+
+def identify_layer_type(layer):
+    if isinstance(layer, nn.Conv2d) or isinstance(layer, nn.Conv3d):
+        return "Convolutional"
+    elif isinstance(layer, nn.BatchNorm2d) or isinstance(layer, nn.BatchNorm3d):
+        return "BatchNorm"
+    elif isinstance(layer, nn.ReLU):
+        return "Activation"
+    elif isinstance(layer, nn.MaxPool2d) or isinstance(layer, nn.AdaptiveAvgPool3d):
+        return "Pooling"
+    elif isinstance(layer, nn.Linear):
+        return "Linear"
+    elif isinstance(layer, nn.Flatten):
+        return "Flatten"
+    else:
+        return layer.__class__.__name__
+
+def run_inference(model, dataloader):
+    model.eval()
+    outputs = []
+    with torch.no_grad():
+        for inputs, _ in dataloader:
+            inputs = inputs.float().to(device)
+            output = model(inputs)
+            outputs.append(output.cpu())
+    all_outputs = torch.cat(outputs, dim=0)
+    mean_activation = torch.mean(all_outputs, dim=0)
+    return mean_activation.tolist(), all_outputs.numpy()
 
 def run_experiment(data_flag, size=28, is_3d=False, use_resnet=False):
     print(f"\n▶️ Running: {data_flag.upper()} | Size: {size} | 3D: {is_3d} | ResNet: {use_resnet}")
@@ -160,6 +200,10 @@ def run_experiment(data_flag, size=28, is_3d=False, use_resnet=False):
     torch.cuda.empty_cache()
     gc.collect()
 
+    # Layer analysis summary
+    layer_types = [(name, identify_layer_type(layer)) for name, layer in model.named_modules() if name]
+    inference_mean, inference_outputs = run_inference(model, test_loader)
+
     result = {
         "dataset": data_flag,
         "size": size,
@@ -167,7 +211,10 @@ def run_experiment(data_flag, size=28, is_3d=False, use_resnet=False):
         "resnet": use_resnet,
         "params": total_params,
         "accuracy": acc,
-        "weights_file": weights_filename
+        "weights_file": weights_filename,
+        "layers": layer_types,
+        "inference_mean": inference_mean,
+        "inference_outputs": inference_outputs.tolist()
     }
     all_results.append(result)
     return result
@@ -180,6 +227,6 @@ experiments = [
 ]
 
 results = [run_experiment(*args) for args in experiments]
-df = pd.DataFrame(all_results)
+df = pd.DataFrame([{k: v for k, v in r.items() if k not in ['layers', 'inference_outputs'] } for r in all_results])
 df.to_csv(os.path.join(save_dir, "summary.csv"), index=False)
 print(f"✅ Results saved to {os.path.join(save_dir, 'summary.csv')}")
