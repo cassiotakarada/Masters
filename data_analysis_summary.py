@@ -7,12 +7,12 @@ import os
 from scipy.stats import entropy
 from scipy.spatial.distance import cdist
 
-# --------------------- Configuration ---------------------
+# --------------------- Layer Type Inference ---------------------
 def infer_layer_type(layer_name):
     name = layer_name.lower()
-    if "conv" in name:
+    if "conv" in name or any(k in name for k in ["0", "3", "6"]):  # heuristics for nn.Sequential
         return "Convolutional"
-    elif "bn" in name or "batchnorm" in name:
+    elif "bn" in name or "batchnorm" in name or "running" in name:
         return "BatchNorm"
     elif "relu" in name:
         return "Activation"
@@ -23,12 +23,12 @@ def infer_layer_type(layer_name):
     elif "flatten" in name:
         return "Flatten"
     else:
-        return "Unknown"
+        return "Other"
 
 # --------------------- Normalization ---------------------
 def compute_normalized_histogram(data, bins=100):
     hist, _ = np.histogram(data, bins=bins, density=True)
-    hist = hist / np.sum(hist) 
+    hist = hist / np.sum(hist)
     return hist
 
 # --------------------- LMC Complexity ---------------------
@@ -75,38 +75,46 @@ def sample_entropy(U, m=2, r=None):
     except:
         return np.nan
 
-# ------------------- Ask Folder and Analyze Weights -------------------
+# ------------------- Folder Selection -------------------
 folder_name = input("📂 Enter the folder name (e.g., 1_3): ").strip()
 weights_dir = os.path.join("results", folder_name)
 if not os.path.exists(weights_dir):
     print(f"❌ Folder not found: {weights_dir}")
     exit()
 
+# ------------------- Analyze Weights -------------------
 results = []
 for file in os.listdir(weights_dir):
     if file.endswith("_weights.pth"):
         path = os.path.join(weights_dir, file)
-        print(f"Analyzing {file}...")
-        model_weights = torch.load(path, map_location="cpu")
+        print(f"🔍 Analyzing {file}...")
+        try:
+            model_weights = torch.load(path, map_location="cpu")
+        except Exception as e:
+            print(f"⚠️ Skipping {file} due to error: {e}")
+            continue
 
         for name, weight in model_weights.items():
             if not isinstance(weight, torch.Tensor):
                 continue
-            weight_np = weight.cpu().detach().numpy()
-            flat = weight_np.flatten()
-
+            if "bias" in name.lower():
+                continue
+            flat = weight.detach().cpu().numpy().flatten()
+            if flat.size == 0:
+                continue
             flat_sample = flat[:10000] if len(flat) > 10000 else flat
-
             lmc = lmc_complexity(flat_sample)
             sampen = sample_entropy(flat_sample)
+            layer_type = infer_layer_type(name)
 
             results.append({
                 "file": file,
                 "layer": name,
-                "layer_type": infer_layer_type(name),
-                "shape": weight_np.shape,
+                "layer_type": layer_type,
+                "shape": weight.shape,
                 "LMC": lmc,
-                "SampEn": sampen
+                "SampEn": sampen,
+                "layer_label": f"{layer_type} | {name}"
             })
 
 # ------------------- DataFrame Output -------------------
@@ -134,24 +142,31 @@ if choice != str(len(unique_files)+1):
         exit()
 
 # ------------------- Plotting -------------------
-plt.figure(figsize=(12, 5))
-sns.barplot(x="layer", y="LMC", hue="file", data=df)
+df = df.sort_values(by="layer")
+df = df.dropna(subset=["LMC", "SampEn"])
+
+# 🎨 Custom color palette for layer types
+palette = {
+    "Convolutional": "#1f77b4",
+    "BatchNorm": "#ff7f0e",
+    "Activation": "#2ca02c",
+    "Pooling": "#9467bd",
+    "Linear": "#8c564b",
+    "Flatten": "#e377c2",
+    "Other": "#7f7f7f"
+}
+
+plt.figure(figsize=(14, 6))
+sns.barplot(x="layer_label", y="LMC", hue="layer_type", data=df, palette=palette, dodge=False)
 plt.xticks(rotation=90)
-plt.title("LMC Complexity by Layer")
+plt.title("📊 LMC Complexity by Layer Type")
 plt.tight_layout()
 plt.show()
 
-plt.figure(figsize=(12, 5))
-sns.barplot(x="layer", y="SampEn", hue="file", data=df)
+plt.figure(figsize=(14, 6))
+sns.barplot(x="layer_label", y="SampEn", hue="layer_type", data=df, palette=palette, dodge=False)
 plt.xticks(rotation=90)
-plt.title("Sample Entropy by Layer")
-plt.tight_layout()
-plt.show()
-
-plt.figure(figsize=(12, 5))
-sns.boxplot(x="layer_type", y="LMC", data=df)
-plt.xticks(rotation=45)
-plt.title("LMC by Layer Type")
+plt.title("📊 Sample Entropy by Layer Type")
 plt.tight_layout()
 plt.show()
 
@@ -162,8 +177,7 @@ print(f"✅ Saved complexity results to: {output_path}")
 
 # ------------------- Group Summary by Layer Type -------------------
 group_summary = df.groupby("layer_type")[["LMC", "SampEn"]].agg(["mean", "std", "count", "min", "max"])
-group_summary.columns = ['_'.join(col).strip() for col in group_summary.columns.values]  # flatten MultiIndex
-
+group_summary.columns = ['_'.join(col).strip() for col in group_summary.columns.values]
 summary_path = os.path.join(weights_dir, "layer_type_summary.csv")
 group_summary.to_csv(summary_path)
 print(f"📄 Layer-type summary saved to: {summary_path}")

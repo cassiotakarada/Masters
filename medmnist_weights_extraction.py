@@ -201,17 +201,16 @@ def run_experiment(data_flag, size=28, is_3d=False, use_resnet=False):
     torch.cuda.empty_cache()
     gc.collect()
 
-    # Layer analysis summary
     layer_types = [(name, identify_layer_type(layer)) for name, layer in model.named_modules() if name]
     inference_mean, inference_outputs = run_inference(model, test_loader)
 
-    # Save inference results
-    json_path = os.path.join(save_dir, f"{data_flag}_{size}_inference_mean.json")
-    with open(json_path, "w") as f:
+    with open(os.path.join(save_dir, f"{data_flag}_{size}_inference_mean.json"), "w") as f:
         json.dump({f"neuron_{i}": val for i, val in enumerate(inference_mean)}, f)
 
-    pt_path = os.path.join(save_dir, f"{data_flag}_{size}_inference_outputs.pt")
-    torch.save({"layer": torch.tensor(inference_outputs)}, pt_path)
+    with open(os.path.join(save_dir, f"{data_flag}_{size}_layer_types.json"), "w") as f:
+        json.dump(layer_types, f, indent=2)
+
+    torch.save({"layer": torch.tensor(inference_outputs)}, os.path.join(save_dir, f"{data_flag}_{size}_inference_outputs.pt"))
 
     result = {
         "dataset": data_flag,
