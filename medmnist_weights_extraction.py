@@ -17,10 +17,9 @@ import gc
 import re
 import json
 
-# Set device
+# Device setup
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Reproducibility
 def set_seed(seed=42):
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -28,7 +27,6 @@ def set_seed(seed=42):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
 
-# Simple CNN for 2D
 def get_simple_cnn(in_channels, num_classes):
     return nn.Sequential(
         nn.Conv2d(in_channels, 16, kernel_size=3), nn.BatchNorm2d(16), nn.ReLU(),
@@ -42,10 +40,8 @@ def get_simple_cnn(in_channels, num_classes):
         nn.Linear(128, num_classes)
     )
 
-# Ask user for number of epochs
-NUM_EPOCHS = int(input("🔢 Enter number of epochs: ").strip())
+NUM_EPOCHS = int(input("\U0001f522 Enter number of epochs: ").strip())
 
-# Auto-incremental experiment ID
 def get_next_id(results_dir="results"):
     if not os.path.exists(results_dir):
         os.makedirs(results_dir)
@@ -58,7 +54,6 @@ def get_next_id(results_dir="results"):
             existing_ids.append(int(match.group(1)))
     return max(existing_ids, default=0) + 1
 
-# Counter and save folder
 global_id_counter = get_next_id()
 folder_name = f"{global_id_counter}_{NUM_EPOCHS}"
 save_dir = os.path.join("results", folder_name)
@@ -67,20 +62,22 @@ os.makedirs(save_dir, exist_ok=True)
 all_results = []
 
 def identify_layer_type(layer):
-    if isinstance(layer, nn.Conv2d) or isinstance(layer, nn.Conv3d):
+    if isinstance(layer, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
         return "Convolutional"
-    elif isinstance(layer, nn.BatchNorm2d) or isinstance(layer, nn.BatchNorm3d):
+    elif isinstance(layer, nn.Linear):
+        return "Linear"
+    elif isinstance(layer, nn.Embedding):
+        return "Embedding"
+    elif isinstance(layer, (nn.BatchNorm2d, nn.BatchNorm3d)):
         return "BatchNorm"
     elif isinstance(layer, nn.ReLU):
         return "Activation"
-    elif isinstance(layer, nn.MaxPool2d) or isinstance(layer, nn.AdaptiveAvgPool3d):
+    elif isinstance(layer, (nn.MaxPool2d, nn.AdaptiveAvgPool3d)):
         return "Pooling"
-    elif isinstance(layer, nn.Linear):
-        return "Linear"
     elif isinstance(layer, nn.Flatten):
         return "Flatten"
     else:
-        return layer.__class__.__name__
+        return "Other"
 
 def run_inference(model, dataloader):
     model.eval()
@@ -95,7 +92,7 @@ def run_inference(model, dataloader):
     return mean_activation.tolist(), all_outputs.numpy()
 
 def run_experiment(data_flag, size=28, is_3d=False, use_resnet=False):
-    print(f"\n▶️ Running: {data_flag.upper()} | Size: {size} | 3D: {is_3d} | ResNet: {use_resnet}")
+    print(f"\n\u25b6\ufe0f Running: {data_flag.upper()} | Size: {size} | 3D: {is_3d} | ResNet: {use_resnet}")
     set_seed()
 
     info = INFO[data_flag]
@@ -103,7 +100,10 @@ def run_experiment(data_flag, size=28, is_3d=False, use_resnet=False):
     n_classes = len(info['label'])
     DataClass = getattr(medmnist, info['python_class'])
 
-    transform = None if is_3d else transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=[.5], std=[.5])])
+    transform = None if is_3d else transforms.Compose([
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[.5], std=[.5])
+    ])
     kwargs = {'split': 'train', 'transform': transform, 'download': True}
     if size != 28:
         kwargs['size'] = size
@@ -111,12 +111,8 @@ def run_experiment(data_flag, size=28, is_3d=False, use_resnet=False):
     train_dataset = DataClass(**kwargs)
     test_dataset = DataClass(split='test', transform=transform, download=True, size=size if size != 28 else None)
 
-    if is_3d and size >= 64:
-        batch_size = 8
-        test_batch_size = 16
-    else:
-        batch_size = 128
-        test_batch_size = 256
+    batch_size = 8 if is_3d and size >= 64 else 128
+    test_batch_size = 16 if is_3d and size >= 64 else 256
 
     train_loader = data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     test_loader = data.DataLoader(test_dataset, batch_size=test_batch_size, shuffle=False)
@@ -144,6 +140,10 @@ def run_experiment(data_flag, size=28, is_3d=False, use_resnet=False):
 
     writer = SummaryWriter(log_dir=os.path.join("runs", f"{data_flag}_{size}_{folder_name}"))
 
+    train_losses = []
+    test_losses = []
+    test_accuracies = []
+
     for epoch in range(NUM_EPOCHS):
         model.train()
         running_loss = 0
@@ -158,11 +158,13 @@ def run_experiment(data_flag, size=28, is_3d=False, use_resnet=False):
             running_loss += loss.item()
 
             for name, param in model.named_parameters():
-                writer.add_histogram(f"Weights/{name}", param, epoch)
-                if param.grad is not None:
-                    writer.add_histogram(f"Gradients/{name}", param.grad, epoch)
+                if not any(excl in name.lower() for excl in ['running_mean', 'running_var']):
+                    writer.add_histogram(f"Weights/{name}", param, epoch)
+                    if param.grad is not None:
+                        writer.add_histogram(f"Gradients/{name}", param.grad, epoch)
 
         avg_train_loss = running_loss / len(train_loader)
+        train_losses.append(avg_train_loss)
         writer.add_scalar("Loss/train", avg_train_loss, epoch)
 
         if epoch == 0 and not is_3d:
@@ -184,6 +186,8 @@ def run_experiment(data_flag, size=28, is_3d=False, use_resnet=False):
                 y_pred.extend(predicted.cpu().numpy())
 
         acc = accuracy_score(y_true, y_pred)
+        test_losses.append(test_loss / len(test_loader))
+        test_accuracies.append(acc)
         writer.add_scalar("Loss/test", test_loss / len(test_loader), epoch)
         writer.add_scalar("Accuracy/test", acc, epoch)
 
@@ -195,22 +199,41 @@ def run_experiment(data_flag, size=28, is_3d=False, use_resnet=False):
     writer.add_text("Experiment Info", f"Dataset: {data_flag}\nSize: {size}\nResNet: {use_resnet}")
     writer.close()
 
-    torch.save(model.state_dict(), save_path)
+    # Save training metrics to CSV
+    metrics_df = pd.DataFrame({
+        "epoch": list(range(1, NUM_EPOCHS + 1)),
+        "train_loss": train_losses,
+        "test_loss": test_losses,
+        "test_accuracy": test_accuracies
+    })
+    metrics_df.to_csv(os.path.join(save_dir, f"{data_flag}_{size}_training_metrics.csv"), index=False)
+
+    model_weights = {
+        k: v for k, v in model.state_dict().items()
+        if not any(x in k for x in ["running_mean", "running_var"])
+    }
+    torch.save(model_weights, save_path)
     print(f"✅ Saved weights to: {save_path}")
 
     torch.cuda.empty_cache()
     gc.collect()
 
-    layer_types = [(name, identify_layer_type(layer)) for name, layer in model.named_modules() if name]
+    param_type_mapping = {}
+    for module_name, module in model.named_modules():
+        for param_name, _ in module.named_parameters(recurse=False):
+            full_name = f"{module_name}.{param_name}" if module_name else param_name
+            param_type_mapping[full_name] = identify_layer_type(module)
+
+    with open(os.path.join(save_dir, f"{data_flag}_{size}_param_types.json"), "w") as f:
+        json.dump(param_type_mapping, f, indent=2)
+
     inference_mean, inference_outputs = run_inference(model, test_loader)
 
     with open(os.path.join(save_dir, f"{data_flag}_{size}_inference_mean.json"), "w") as f:
         json.dump({f"neuron_{i}": val for i, val in enumerate(inference_mean)}, f)
 
-    with open(os.path.join(save_dir, f"{data_flag}_{size}_layer_types.json"), "w") as f:
-        json.dump(layer_types, f, indent=2)
-
-    torch.save({"layer": torch.tensor(inference_outputs)}, os.path.join(save_dir, f"{data_flag}_{size}_inference_outputs.pt"))
+    torch.save({"layer": torch.tensor(inference_outputs)},
+               os.path.join(save_dir, f"{data_flag}_{size}_inference_outputs.pt"))
 
     result = {
         "dataset": data_flag,
@@ -220,13 +243,12 @@ def run_experiment(data_flag, size=28, is_3d=False, use_resnet=False):
         "params": total_params,
         "accuracy": acc,
         "weights_file": weights_filename,
-        "layers": layer_types,
-        "inference_mean": inference_mean,
-        "inference_outputs": inference_outputs.tolist()
+        "inference_mean": inference_mean
     }
     all_results.append(result)
     return result
 
+# Run experiments
 experiments = [
     ('pathmnist', 28, False, False),
     ('pathmnist', 224, False, True),
@@ -235,6 +257,6 @@ experiments = [
 ]
 
 results = [run_experiment(*args) for args in experiments]
-df = pd.DataFrame([{k: v for k, v in r.items() if k not in ['layers', 'inference_outputs']} for r in all_results])
+df = pd.DataFrame(results)
 df.to_csv(os.path.join(save_dir, "summary.csv"), index=False)
 print(f"✅ Results saved to {os.path.join(save_dir, 'summary.csv')}")
