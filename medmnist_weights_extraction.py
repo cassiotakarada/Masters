@@ -16,8 +16,8 @@ import pandas as pd
 import gc
 import re
 import json
+import matplotlib.pyplot as plt
 
-# Device setup
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def set_seed(seed=42):
@@ -92,7 +92,7 @@ def run_inference(model, dataloader):
     return mean_activation.tolist(), all_outputs.numpy()
 
 def run_experiment(data_flag, size=28, is_3d=False, use_resnet=False):
-    print(f"\n\u25b6\ufe0f Running: {data_flag.upper()} | Size: {size} | 3D: {is_3d} | ResNet: {use_resnet}")
+    print(f"\n▶️ Running: {data_flag.upper()} | Size: {size} | 3D: {is_3d} | ResNet: {use_resnet}")
     set_seed()
 
     info = INFO[data_flag]
@@ -135,14 +135,18 @@ def run_experiment(data_flag, size=28, is_3d=False, use_resnet=False):
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
 
-    weights_filename = f"{data_flag}_{size}_weights.pth"
-    save_path = os.path.join(save_dir, weights_filename)
-
     writer = SummaryWriter(log_dir=os.path.join("runs", f"{data_flag}_{size}_{folder_name}"))
 
     train_losses = []
     test_losses = []
     test_accuracies = []
+
+    best_test_loss = float("inf")
+    best_model_state = None
+    best_epoch = 0
+    overfit_epoch = None
+
+    torch.save(model.state_dict(), os.path.join(save_dir, f"initial_weights_{data_flag}_{size}.pth"))
 
     for epoch in range(NUM_EPOCHS):
         model.train()
@@ -157,19 +161,9 @@ def run_experiment(data_flag, size=28, is_3d=False, use_resnet=False):
             optimizer.step()
             running_loss += loss.item()
 
-            for name, param in model.named_parameters():
-                if not any(excl in name.lower() for excl in ['running_mean', 'running_var']):
-                    writer.add_histogram(f"Weights/{name}", param, epoch)
-                    if param.grad is not None:
-                        writer.add_histogram(f"Gradients/{name}", param.grad, epoch)
-
         avg_train_loss = running_loss / len(train_loader)
         train_losses.append(avg_train_loss)
         writer.add_scalar("Loss/train", avg_train_loss, epoch)
-
-        if epoch == 0 and not is_3d:
-            img_grid = torchvision.utils.make_grid(inputs[:16])
-            writer.add_image("Input/sample", img_grid, epoch)
 
         model.eval()
         test_loss = 0.0
@@ -185,38 +179,42 @@ def run_experiment(data_flag, size=28, is_3d=False, use_resnet=False):
                 y_true.extend(targets.cpu().numpy())
                 y_pred.extend(predicted.cpu().numpy())
 
+        avg_test_loss = test_loss / len(test_loader)
         acc = accuracy_score(y_true, y_pred)
-        test_losses.append(test_loss / len(test_loader))
+        test_losses.append(avg_test_loss)
         test_accuracies.append(acc)
-        writer.add_scalar("Loss/test", test_loss / len(test_loader), epoch)
+
+        writer.add_scalar("Loss/test", avg_test_loss, epoch)
         writer.add_scalar("Accuracy/test", acc, epoch)
 
-        for param_group in optimizer.param_groups:
-            writer.add_scalar("LearningRate", param_group["lr"], epoch)
+        if avg_test_loss < best_test_loss:
+            best_test_loss = avg_test_loss
+            best_model_state = model.state_dict()
+            best_epoch = epoch
+            torch.save(model.state_dict(), os.path.join(save_dir, f"bef_weights_{data_flag}_{size}.pth"))
+            overfit_epoch = None
+        elif overfit_epoch is None:
+            overfit_epoch = epoch
+            torch.save(model.state_dict(), os.path.join(save_dir, f"aft_weights_{data_flag}_{size}.pth"))
 
-    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    writer.add_scalar("Params", total_params, 0)
-    writer.add_text("Experiment Info", f"Dataset: {data_flag}\nSize: {size}\nResNet: {use_resnet}")
     writer.close()
 
-    # Save training metrics to CSV
-    metrics_df = pd.DataFrame({
-        "epoch": list(range(1, NUM_EPOCHS + 1)),
-        "train_loss": train_losses,
-        "test_loss": test_losses,
-        "test_accuracy": test_accuracies
-    })
-    metrics_df.to_csv(os.path.join(save_dir, f"{data_flag}_{size}_training_metrics.csv"), index=False)
+    if best_model_state:
+        torch.save(best_model_state, os.path.join(save_dir, f"{data_flag}_{size}_weights.pth"))
 
-    model_weights = {
-        k: v for k, v in model.state_dict().items()
-        if not any(x in k for x in ["running_mean", "running_var"])
-    }
-    torch.save(model_weights, save_path)
-    print(f"✅ Saved weights to: {save_path}")
-
-    torch.cuda.empty_cache()
-    gc.collect()
+    plt.figure(figsize=(10, 5))
+    plt.plot(train_losses, label="Train Loss")
+    plt.plot(test_losses, label="Test Loss")
+    if overfit_epoch is not None:
+        plt.axvline(x=overfit_epoch, color='red', linestyle='--', label=f'Overfit @ Epoch {overfit_epoch+1}')
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title(f"Training vs Test Loss - {data_flag}_{size}")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(os.path.join(save_dir, f"{data_flag}_{size}_loss_plot.png"))
+    plt.close()
 
     param_type_mapping = {}
     for module_name, module in model.named_modules():
@@ -224,8 +222,15 @@ def run_experiment(data_flag, size=28, is_3d=False, use_resnet=False):
             full_name = f"{module_name}.{param_name}" if module_name else param_name
             param_type_mapping[full_name] = identify_layer_type(module)
 
+    # Save original and per-version param_types
     with open(os.path.join(save_dir, f"{data_flag}_{size}_param_types.json"), "w") as f:
         json.dump(param_type_mapping, f, indent=2)
+
+    prefixes = ["initial", "bef", "aft"]
+    for prefix in prefixes:
+        versioned_name = f"{prefix}_weights_{data_flag}_{size}_param_types.json"
+        with open(os.path.join(save_dir, versioned_name), "w") as f:
+            json.dump(param_type_mapping, f, indent=2)
 
     inference_mean, inference_outputs = run_inference(model, test_loader)
 
@@ -240,15 +245,14 @@ def run_experiment(data_flag, size=28, is_3d=False, use_resnet=False):
         "size": size,
         "3d": is_3d,
         "resnet": use_resnet,
-        "params": total_params,
+        "params": sum(p.numel() for p in model.parameters() if p.requires_grad),
         "accuracy": acc,
-        "weights_file": weights_filename,
+        "weights_file": f"{data_flag}_{size}_weights.pth",
         "inference_mean": inference_mean
     }
     all_results.append(result)
     return result
 
-# Run experiments
 experiments = [
     ('pathmnist', 28, False, False),
     ('pathmnist', 224, False, True),
