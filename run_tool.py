@@ -6,8 +6,9 @@ options = {
     "3": ("Run TensorBoard", "tensorboard --logdir=runs --host=0.0.0.0 --port=6006"),
     "4": ("Analyze inference outputs", "analyze_inference_outputs.py"),
     "5": ("Analyze weights complexity (LMC & Sample Entropy)", "data_analysis_summary.py"),
-    "6": ("Show best training epochs summary", "best_epochs.py"),
-    "7": ("Activate virtual environment", "echo '⚠️ Please run this manually: source venv/bin/activate'")
+    "6": ("Plot global complexity summary (SampEn vs LMC)", "summary_complexity_plot.py"),
+    "7": ("Show best training epochs summary", "best_epochs.py"),
+    "8": ("Activate virtual environment", "echo '⚠️ Please run this manually: source venv/bin/activate'")
 }
 
 print("🧠 Select a script to run:\n")

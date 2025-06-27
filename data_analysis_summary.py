@@ -65,6 +65,14 @@ for folder in os.listdir(results_root):
     if not os.path.isdir(folder_path) or "_" not in folder:
         continue
 
+    # 🗂️ Extrai número de épocas da pasta (ex: "organmnist3d_64_50" -> 50)
+    try:
+        epochs = folder.split("_")[-1]
+        if not epochs.isdigit():
+            epochs = "unknown"
+    except:
+        epochs = "unknown"
+
     save_dir = os.path.join(graph_output_root, folder)
     os.makedirs(save_dir, exist_ok=True)
 
@@ -118,15 +126,15 @@ for folder in os.listdir(results_root):
 
         df = df.sort_values(by="layer")
 
-        # Save plots
-        lmc_output = os.path.join(save_dir, f"{basename}_LMC.png")
-        sampen_output = os.path.join(save_dir, f"{basename}_SampEn.png")
+        # 📸 Nome de saída agora inclui número de épocas
+        lmc_output = os.path.join(save_dir, f"{basename}_LMC_{epochs}.png")
+        sampen_output = os.path.join(save_dir, f"{basename}_SampEn_{epochs}.png")
 
         if not os.path.exists(lmc_output):
             plt.figure(figsize=(16, 6))
             sns.barplot(x="layer_label", y="LMC", hue="layer_type", data=df, palette=palette, dodge=False)
             plt.xticks(rotation=90)
-            plt.title(f"LMC Complexity - {basename}")
+            plt.title(f"LMC Complexity - {basename} ({epochs} epochs)")
             plt.tight_layout()
             plt.savefig(lmc_output)
             plt.close()
@@ -136,7 +144,7 @@ for folder in os.listdir(results_root):
             plt.figure(figsize=(16, 6))
             sns.barplot(x="layer_label", y="SampEn", hue="layer_type", data=df, palette=palette, dodge=False)
             plt.xticks(rotation=90)
-            plt.title(f"Sample Entropy - {basename}")
+            plt.title(f"Sample Entropy - {basename} ({epochs} epochs)")
             plt.tight_layout()
             plt.savefig(sampen_output)
             plt.close()
